@@ -58,7 +58,7 @@ class FormErrorHandler extends JMSFormErrorsHandler
 
         $errors = [];
 
-        foreach ($data->getErrors() as $error) {
+        foreach ($data->getErrors(true) as $error) {
             $errors[] = $this->getMessageError($error);
         }
 
@@ -98,7 +98,11 @@ class FormErrorHandler extends JMSFormErrorsHandler
     private function getMessageError(FormError $error)
     {
         if ($this->translation === null) {
-            return $error->getMessage();
+            return [
+                'propertyPath'=>$error->getCause()->getPropertyPath(),
+                'invalidValue'=>$error->getCause()->getInvalidValue(),
+                'message'=>$error->getMessage()
+                ];
         }
 
         if (null !== $error->getMessagePluralization()) {

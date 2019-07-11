@@ -23,6 +23,8 @@ use Hessnatur\SimpleRestCRUDBundle\Model\ApiResource;
 use Hessnatur\SimpleRestCRUDBundle\Repository\ApiResourceRepositoryInterface;
 use Lexik\Bundle\FormFilterBundle\Filter\FilterBuilderUpdaterInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Symfony\Component\Form\AbstractType;
+use Symfony\Component\Form\Extension\Core\Type\CollectionType;
 use Symfony\Component\Form\FormFactoryInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
@@ -31,6 +33,7 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
+use Symfony\Component\Validator\Constraints\Valid;
 
 /**
  * @author Felix Niedballa <felix.niedballa@hess-natur.de>
@@ -308,7 +311,7 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
      * @Rest\Post("")
      * @Rest\View(serializerGroups={"detail"})
      */
-    public function postApiResourceAction(?ApiResource $apiResource)
+    public function postApiResourceAction(?ApiResource $apiResource, Request $request)
     {
         $responseCode = Response::HTTP_OK;
         if ($apiResource === null) {
@@ -320,27 +323,49 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
             }
         }
 
-        $form = $this->formFactory->createNamed(null, $this->getApiResourceFormClass(), $apiResource);
+        $this->logger->debug("REQUEST:");
+        $this->logger->debug(print_r($this->requestStack->getCurrentRequest()->request->all(), true));
+        $this->logger->debug(print_r($this->requestStack->getCurrentRequest()->request, true));
+        $this->logger->debug(print_r($request->request->all(), true));
+        $form = $this->formFactory->createNamedBuilder('')
+        ->add('resources', CollectionType::class, [
+            'entry_type'=>$this->getApiResourceFormClass(), 'mapped'=>false,
+            'allow_add'=>true, 'constraints' => [new Valid()],'entry_options'=>[
+                'mapped'=>true
+            ],
+        ])
+        ->getForm();
+
         $this->requestStack->getMasterRequest()->request->remove('_method');
+
         $form->submit($this->requestStack->getMasterRequest()->request->all());
 
         if ($form->isValid()) {
-            $this->eventDispatcher->dispatch(
-                new ApiResourceEvent($apiResource),
-                $responseCode === Response::HTTP_CREATED
-                    ? HessnaturSimpleRestCRUDEvents::BEFORE_CREATE_API_RESOURCE
-                    : HessnaturSimpleRestCRUDEvents::BEFORE_UPDATE_API_RESOURCE
-            );
-            $this->apiResourceManager->update($apiResource);
-            $this->eventDispatcher->dispatch(
-                new ApiResourceEvent($apiResource),
-                $responseCode === Response::HTTP_CREATED
-                    ? HessnaturSimpleRestCRUDEvents::AFTER_CREATE_API_RESOURCE
-                    : HessnaturSimpleRestCRUDEvents::AFTER_UPDATE_API_RESOURCE
-            );
 
+            foreach($form->get('resources') as $apiResource){
 
-            return View::create($apiResource, $responseCode)
+                $apiResource = $apiResource->getData();
+
+                $this->eventDispatcher->dispatch(
+                    new ApiResourceEvent($apiResource),
+                    $responseCode === Response::HTTP_CREATED
+                        ? HessnaturSimpleRestCRUDEvents::BEFORE_CREATE_API_RESOURCE
+                        : HessnaturSimpleRestCRUDEvents::BEFORE_UPDATE_API_RESOURCE
+                );
+
+                $this->apiResourceManager->entityManager->persist($apiResource);
+
+                $this->eventDispatcher->dispatch(
+                    new ApiResourceEvent($apiResource),
+                    $responseCode === Response::HTTP_CREATED
+                        ? HessnaturSimpleRestCRUDEvents::AFTER_CREATE_API_RESOURCE
+                        : HessnaturSimpleRestCRUDEvents::AFTER_UPDATE_API_RESOURCE
+                );
+            }
+
+            $this->apiResourceManager->entityManager->flush();
+
+            return View::create($form->get('resources')->getViewData(), $responseCode)
                 ->setTemplate('@HessnaturSimpleRestCRUD/ApiResource/form.html.twig')
                 ->setTemplateData(['form'=>$form->createView()])
                 ;

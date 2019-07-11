@@ -21,7 +21,7 @@ class ApiResourceManager implements ApiResourceManagerInterface
     /**
      * @var EntityManagerInterface
      */
-    protected $entityManager;
+    public $entityManager;
 
     /**
      * @param EntityManagerInterface $entityManager
