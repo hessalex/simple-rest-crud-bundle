@@ -25,6 +25,7 @@ use Lexik\Bundle\FormFilterBundle\Filter\FilterBuilderUpdaterInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Form\AbstractType;
 use Symfony\Component\Form\Extension\Core\Type\CollectionType;
+use Symfony\Component\Form\Extension\Core\Type\FormType;
 use Symfony\Component\Form\FormFactoryInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
@@ -37,6 +38,7 @@ use Symfony\Component\Validator\Constraints\Valid;
 
 /**
  * @author Felix Niedballa <felix.niedballa@hess-natur.de>
+ * @author Alex Falk <alex.falk@hess-natur.de>
  */
 abstract class AbstractApiResourceController extends AbstractFOSRestController
 {
@@ -177,23 +179,41 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
         $router = $this->get("router");
         $route = $router->match($request->getPathInfo());
 
-        //$resource = new $this->resource;
         $filter = $this->formFactory->createNamed(null, $this->getApiResourceFilterFormClass());
         $filter->submit($this->requestStack->getCurrentRequest()->query->all());
 
-        $form = $this->formFactory->createNamed(
-            null,
-            $this->getApiResourceFormClass(),
-            $filter->getData(),
+        $filterResource = $filter->getData();
+
+        $form = $this->formFactory->createNamedBuilder(
+            '',
+            FormType::class,
+            ['resources' => [$filter->getData()]],
             [
                 'method' => 'POST',
+                'label' => '',
                 'action' => $this->generateUrl(
                     str_replace('_getnewapiresourceform', '_postapiresource', $route['_route']),
                     [],
                     UrlGeneratorInterface::ABSOLUTE_URL
                 ),
             ]
-        );
+        )
+            ->add(
+                'resources',
+                CollectionType::class,
+                [
+                    'entry_type' => $this->getApiResourceFormClass(),
+                    'mapped' => true,
+                    'allow_add' => true,
+                    'constraints' => [new Valid()],
+                    'entry_options' => [
+                        'label' => false,
+                        'mapped' => true,
+                    ],
+                ],
+                ['resources' => [$filterResource]]
+            )
+            ->getForm();
 
         return View::create($form->createView())
             ->setTemplate('@HessnaturSimpleRestCRUD/ApiResource/form.html.twig')
@@ -302,6 +322,82 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
     }
 
     /**
+     * @param string $id
+     *
+     * @return View
+     *
+     * @throws \Exception
+     *
+     * @Rest\Put("")
+     * @Rest\View(serializerGroups={"list"})
+     */
+    public function putBatchApiResourceAction()
+    {
+        $responseCode = Response::HTTP_OK;
+
+        $collection = $this->apiResourceManager->getRepository($this->getApiResourceClass())->findById(
+            array_pluck($this->requestStack->getMasterRequest()->request->all()['resources'], 'id')
+        );
+
+
+        $form = $this->formFactory->createNamedBuilder('')
+            ->add(
+                'resources',
+                CollectionType::class,
+                [
+                    'entry_type' => $this->getApiResourceFormClass(),
+                    'mapped' => false,
+                    'allow_add' => true,
+                    'constraints' => [new Valid()],
+                    'entry_options' => [
+                        'mapped' => true,
+                    ],
+                ],
+                $collection
+            )
+            ->getForm();
+
+        $this->requestStack->getMasterRequest()->request->remove('_method');
+
+        $form->submit($this->requestStack->getMasterRequest()->request->all());
+
+
+        if ($form->isValid()) {
+
+            foreach ($form->get('resources') as $apiResource) {
+
+                $apiResource = $apiResource->getData();
+
+                if (!$apiResource->getUserCanCreate()) {
+                    throw new AccessDeniedHttpException();
+                }
+
+                $this->eventDispatcher->dispatch(
+                    new ApiResourceEvent($apiResource),
+                    HessnaturSimpleRestCRUDEvents::BEFORE_UPDATE_API_RESOURCE
+                );
+
+                $this->apiResourceManager->entityManager->persist($apiResource);
+
+                $this->eventDispatcher->dispatch(
+                    new ApiResourceEvent($apiResource),
+                    HessnaturSimpleRestCRUDEvents::AFTER_UPDATE_API_RESOURCE
+                );
+            }
+
+            $this->apiResourceManager->entityManager->flush();
+
+            return View::create($form->get('resources')->getViewData(), $responseCode)
+                ->setTemplate('@HessnaturSimpleRestCRUD/ApiResource/form.html.twig')
+                ->setTemplateData(['form' => $form->createView()]);
+        }
+
+        return View::create(['form' => $form], Response::HTTP_BAD_REQUEST)
+            ->setTemplate('@HessnaturSimpleRestCRUD/ApiResource/form.html.twig')
+            ->setTemplateData(['form' => $form->createView()]);
+    }
+
+    /**
      * @param ApiResource|null $apiResource
      *
      * @return View
@@ -323,26 +419,29 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
             }
         }
 
-        $this->logger->debug("REQUEST:");
-        $this->logger->debug(print_r($this->requestStack->getCurrentRequest()->request->all(), true));
-        $this->logger->debug(print_r($this->requestStack->getCurrentRequest()->request, true));
-        $this->logger->debug(print_r($request->request->all(), true));
         $form = $this->formFactory->createNamedBuilder('')
-        ->add('resources', CollectionType::class, [
-            'entry_type'=>$this->getApiResourceFormClass(), 'mapped'=>false,
-            'allow_add'=>true, 'constraints' => [new Valid()],'entry_options'=>[
-                'mapped'=>true
-            ],
-        ])
-        ->getForm();
+            ->add(
+                'resources',
+                CollectionType::class,
+                [
+                    'entry_type' => $this->getApiResourceFormClass(),
+                    'mapped' => false,
+                    'allow_add' => true,
+                    'constraints' => [new Valid()],
+                    'label' => false,
+                    'entry_options' => [
+                        'label' => false,
+                        'mapped' => true,
+                    ],
+                ]
+            )
+            ->getForm();
 
         $this->requestStack->getMasterRequest()->request->remove('_method');
-
         $form->submit($this->requestStack->getMasterRequest()->request->all());
-
         if ($form->isValid()) {
 
-            foreach($form->get('resources') as $apiResource){
+            foreach ($form->get('resources') as $apiResource) {
 
                 $apiResource = $apiResource->getData();
 
@@ -367,14 +466,12 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
 
             return View::create($form->get('resources')->getViewData(), $responseCode)
                 ->setTemplate('@HessnaturSimpleRestCRUD/ApiResource/form.html.twig')
-                ->setTemplateData(['form'=>$form->createView()])
-                ;
+                ->setTemplateData(['form' => $form->createView()]);
         }
 
         return View::create(['form' => $form], Response::HTTP_BAD_REQUEST)
             ->setTemplate('@HessnaturSimpleRestCRUD/ApiResource/form.html.twig')
-            ->setTemplateData(['form' => $form->createView()])
-            ;
+            ->setTemplateData(['form' => $form->createView()]);
     }
 
     /**
