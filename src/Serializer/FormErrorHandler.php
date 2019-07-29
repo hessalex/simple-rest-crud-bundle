@@ -99,9 +99,9 @@ class FormErrorHandler extends JMSFormErrorsHandler
     {
         if ($this->translation === null) {
             return [
-                'propertyPath'=>$error->getCause()->getPropertyPath(),
-                'invalidValue'=>$error->getCause()->getInvalidValue(),
-                'message'=>$error->getMessage()
+                'propertyPath' => $error->getCause()->getPropertyPath(),
+                'invalidValue' => $error->getCause()->getInvalidValue(),
+                'message' => $error->getMessage(),
                 ];
         }
 

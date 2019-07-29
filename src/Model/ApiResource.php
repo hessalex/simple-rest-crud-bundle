@@ -20,7 +20,6 @@ use JMS\Serializer\Annotation as JMS;
  */
 abstract class ApiResource
 {
-
     use TimestampableEntity;
     /**
      * @var string
@@ -43,7 +42,6 @@ abstract class ApiResource
      * @JMS\Groups({"detail", "list"})
      */
     protected $self;
-
 
     /**
      * @var bool
@@ -113,7 +111,7 @@ abstract class ApiResource
         return $this->self;
     }
 
-      /**
+    /**
      * @return bool
      */
     public function getUserCanCreate(): bool

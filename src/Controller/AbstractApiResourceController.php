@@ -22,8 +22,8 @@ use Hessnatur\SimpleRestCRUDBundle\Manager\ApiResourceManagerInterface;
 use Hessnatur\SimpleRestCRUDBundle\Model\ApiResource;
 use Hessnatur\SimpleRestCRUDBundle\Repository\ApiResourceRepositoryInterface;
 use Lexik\Bundle\FormFilterBundle\Filter\FilterBuilderUpdaterInterface;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
-use Symfony\Component\Form\AbstractType;
 use Symfony\Component\Form\Extension\Core\Type\CollectionType;
 use Symfony\Component\Form\Extension\Core\Type\FormType;
 use Symfony\Component\Form\FormFactoryInterface;
@@ -32,7 +32,6 @@ use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
-use Psr\Log\LoggerInterface;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 use Symfony\Component\Validator\Constraints\Valid;
 
@@ -158,25 +157,31 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
             in_array($orderByField, $this->getRepository()::getSortableFields())
             && in_array(strtolower($orderByDirection), ['asc', 'desc'])
         ) {
-            $queryBuilder->orderBy($queryBuilder->getRootAliases()[0].'.'.$orderByField, $orderByDirection);
+            $queryBuilder->orderBy($queryBuilder->getRootAliases()[0] . '.' . $orderByField, $orderByDirection);
         }
 
         $this->filterBuilderUpdater->addFilterConditions($form, $queryBuilder);
 
-        return View::create($this->paginate($queryBuilder));
+        $data = $this->paginate($queryBuilder);
+
+        return View::create($data)
+            ->setTemplate('@HessnaturSimpleRestCRUD/ApiResource/data.html.twig')
+            ->setTemplateData(['data' => $data]);
     }
 
     /**
      * @Rest\Get("/new")
+     *
      * @param ParamFetcher $paramFetcher
      * @param Request      $request
      *
      * @return Response
+     *
      * @throws Exception
      */
     public function getNewApiResourceForm(ParamFetcher $paramFetcher, Request $request)
     {
-        $router = $this->get("router");
+        $router = $this->get('router');
         $route = $router->match($request->getPathInfo());
 
         $filter = $this->formFactory->createNamed(null, $this->getApiResourceFilterFormClass());
@@ -222,30 +227,53 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
 
     /**
      * @Rest\Get("/{id}/edit")
+     *
      * @param ParamFetcher $paramFetcher
      * @param Request      $request
      *
      * @return Response
+     *
      * @throws Exception
      */
     public function getEditApiResourceForm(ParamFetcher $paramFetcher, Request $request, $id)
     {
-        $router = $this->get("router");
+        $router = $this->get('router');
         $route = $router->match($request->getPathInfo());
 
-        $form = $this->formFactory->createNamed(
-            null,
-            $this->getApiResourceFormClass(),
-            $this->fetchApiResource($id),
+        $collection = $this->apiResourceManager->getRepository($this->getApiResourceClass())->findById(
+            $id
+        );
+
+        $form = $this->formFactory->createNamedBuilder(
+            '',
+            FormType::class,
+            ['resources' => $collection],
             [
                 'method' => 'PUT',
+                'label' => '',
                 'action' => $this->generateUrl(
-                    str_replace('_geteditapiresourceform', '_putapiresource', $route['_route']),
-                    ['id' => $id],
+                    str_replace('_geteditapiresourceform', '_putbatchapiresource', $route['_route']),
+                    [],
                     UrlGeneratorInterface::ABSOLUTE_URL
                 ),
             ]
-        );
+        )
+            ->add(
+                'resources',
+                CollectionType::class,
+                [
+                    'entry_type' => $this->getApiResourceFormClass(),
+                    'mapped' => true,
+                    'allow_add' => true,
+                    'constraints' => [new Valid()],
+                    'entry_options' => [
+                        'label' => false,
+                        'mapped' => true,
+                    ],
+                ],
+                ['resources' => $collection]
+            )
+            ->getForm();
 
         return View::create($form->createView())
             ->setTemplate('@HessnaturSimpleRestCRUD/ApiResource/form.html.twig')
@@ -292,7 +320,7 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
             HessnaturSimpleRestCRUDEvents::AFTER_DELETE_API_RESOURCE
         );
 
-        /**
+        /*
          * No Content given
          * @see https://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html
          * @see https://en.wikipedia.org/wiki/List_of_HTTP_status_codes#2xx_Success
@@ -339,7 +367,6 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
             array_pluck($this->requestStack->getMasterRequest()->request->all()['resources'], 'id')
         );
 
-
         $form = $this->formFactory->createNamedBuilder('')
             ->add(
                 'resources',
@@ -361,11 +388,8 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
 
         $form->submit($this->requestStack->getMasterRequest()->request->all());
 
-
         if ($form->isValid()) {
-
             foreach ($form->get('resources') as $apiResource) {
-
                 $apiResource = $apiResource->getData();
 
                 if (!$apiResource->getUserCanCreate()) {
@@ -440,9 +464,7 @@ abstract class AbstractApiResourceController extends AbstractFOSRestController
         $this->requestStack->getMasterRequest()->request->remove('_method');
         $form->submit($this->requestStack->getMasterRequest()->request->all());
         if ($form->isValid()) {
-
             foreach ($form->get('resources') as $apiResource) {
-
                 $apiResource = $apiResource->getData();
 
                 $this->eventDispatcher->dispatch(
